@@ -6,7 +6,7 @@ import * as T from 'fp-ts/lib/Task';
 import * as TE from 'fp-ts/lib/TaskEither';
 import { flow, pipe } from 'fp-ts/function';
 import { tuple } from '../common';
-import { apiOne, apiTwo, database, Profile, User } from './apis';
+import { apiOne, ApiOneError, apiTwo, database, Profile, User } from './apis';
 
 const simpleFlowWithOnlyLastError = pipe(
   apiOne.createUser('email@test.com'),
@@ -30,39 +30,45 @@ const simpleFlowWithKeysAndAllErrors = pipe(
   TE.chain((results) => TE.right(results)),
 );
 
-const rollback = <E extends Error, T, U extends [T, ...T[]]>(error: E, actions: U) =>
-  tuple([error, actions]);
+const makeRollback = <E extends Error, T, U extends [T, ...T[]]>(cause: E, actions: U) => ({ cause, actions});
 
 const flowWithRollback = pipe(
   TE.Do,
   TE.bindW('user', () => pipe(
     apiOne.createUser('email@test.com'),
-    TE.mapLeft(err => rollback(err, [
+    TE.mapLeft(err => makeRollback(err, [
       TE.Do
     ])),
   )),
   TE.bindW('profile', (res) => pipe(
     apiTwo.createProfile('John', 'Brown', res.user.userId),
-    TE.mapLeft(err => rollback(err,[
+    TE.mapLeft(err => makeRollback(err,[
       apiOne.removeUser(res.user.userId),
     ])),
   )),
   TE.bindW('db', (res) => pipe(
     database.persist(res.user.userId, res.profile.profileId),
-    TE.mapLeft(err => rollback(err,[
+    TE.mapLeft(err => makeRollback(err,[
       apiOne.removeUser(res.user.userId),
       apiTwo.removeProfile(res.profile.profileId),
     ])),
   )),
-  TE.chain((results) => TE.right(results)),
-  TE.swap,
-  TE.chain((errors) => pipe(
-    errors[1],
-    (rollbackActions) => Ap.sequenceT(TE.ApplicativeSeq)(...rollbackActions),
-    TE.chain(() => TE.right(errors[0])),
-  )),
-  TE.swap,
-  TE.chainFirst(d => )
+  TE.mapLeft(
+    (rollback) => pipe(
+      rollback.actions,
+      (rollbackActions) => Ap.sequenceT(TE.ApplicativeSeq)(...rollbackActions),
+      TE.swap,
+      TE.map(
+        (rollbackResults) => ({
+          transactionsError: rollback.cause,
+          rollbackError: rollbackResults,
+        }),
+      ),
+      TE.mapLeft(r => ({
+        transactionsError: rollback.cause,
+      })),
+    ),
+  ),
 );
 
 
