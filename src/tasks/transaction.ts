@@ -5,15 +5,24 @@ import * as E from 'fp-ts/lib/Either';
 import * as T from 'fp-ts/lib/Task';
 import * as TE from 'fp-ts/lib/TaskEither';
 import { flow, pipe } from 'fp-ts/function';
-import { tuple } from '../common';
-import { apiOne, ApiOneError, apiTwo, database, Profile, User } from './apis';
+import { makeRollback, wrapError } from '../common';
+import { apiOne, apiTwo, database } from './apis';
 
+const TEwrapLeft = <L, R>(a: TE.TaskEither<L, R>) => pipe(a, TE.mapLeft((e: L) => { e }));
+
+// TE.TaskEither<WrappedError, Entity>
 const simpleFlowWithOnlyLastError = pipe(
-  apiOne.createUser('email@test.com'),
-  TE.chain((res) => apiTwo.createProfile('John', 'Brown', res.userId)),
-  TE.chain((res) => database.persist(res.userId, res.profileId))
+  pipe(apiOne.createUser('email@test.com'), TE.mapLeft(wrapError)),
+  TE.chain((res) => pipe(apiTwo.createProfile('John', 'Brown', res.userId), TE.mapLeft(wrapError))),
+  TE.chain((res) => pipe(database.persist(res.userId, res.profileId), TE.mapLeft(wrapError))),
 );
 
+//  TE.TaskEither<ApiOneError | ApiTwoError | DatabaseError,
+//    {
+//      readonly 0: User;
+//      readonly 1: Profile;
+//      readonly 2: Entity;
+//    }>
 const simpleFlowWithIndexesAndAllErrors = pipe(
   TE.Do,
   TE.bindW('0', () => apiOne.createUser('email@test.com')),
@@ -22,6 +31,12 @@ const simpleFlowWithIndexesAndAllErrors = pipe(
   TE.chain((results) => TE.right(results)),
 );
 
+// TE.TaskEither<ApiOneError | ApiTwoError | DatabaseError,
+//    {
+//      readonly user: User;
+//      readonly profile: Profile;
+//      readonly db: Entity;
+//    }>
 const simpleFlowWithKeysAndAllErrors = pipe(
   TE.Do,
   TE.bindW('user', () => apiOne.createUser('email@test.com')),
@@ -30,9 +45,8 @@ const simpleFlowWithKeysAndAllErrors = pipe(
   TE.chain((results) => TE.right(results)),
 );
 
-const makeRollback = <E extends Error, T, U extends [T, ...T[]]>(cause: E, actions: U) => ({ cause, actions});
 
-const flowWithRollback = pipe(
+const flowWithRollbackAndCondition = (doCreateProfile: boolean) => pipe(
   TE.Do,
   TE.bindW('user', () => pipe(
     apiOne.createUser('email@test.com'),
@@ -41,22 +55,22 @@ const flowWithRollback = pipe(
     ])),
   )),
   TE.bindW('profile', (res) => pipe(
-    apiTwo.createProfile('John', 'Brown', res.user.userId),
+    doCreateProfile ? apiTwo.createProfile('John', 'Brown', res.user.userId) : TE.of(null),
     TE.mapLeft(err => makeRollback(err,[
-      apiOne.removeUser(res.user.userId),
+      pipe(apiOne.removeUser(res.user.userId), TE.mapLeft(wrapError)),
     ])),
   )),
   TE.bindW('db', (res) => pipe(
-    database.persist(res.user.userId, res.profile.profileId),
+    database.persist(res.user.userId, res.profile ? res.profile?.profileId :  null),
     TE.mapLeft(err => makeRollback(err,[
-      apiOne.removeUser(res.user.userId),
-      apiTwo.removeProfile(res.profile.profileId),
+      pipe(apiOne.removeUser(res.user.userId), TE.mapLeft(wrapError)),
+      pipe(res.profile ? apiTwo.removeProfile(res.profile.profileId) : TE.of(null), TE.mapLeft(wrapError)),
     ])),
   )),
   TE.mapLeft(
     (rollback) => pipe(
       rollback.actions,
-      (rollbackActions) => Ap.sequenceT(TE.ApplicativeSeq)(...rollbackActions),
+      (rollbackActions) => Ap.sequenceT(TE.ApplyPar)(...rollbackActions),
       TE.swap,
       TE.map(
         (rollbackResults) => ({
@@ -71,16 +85,12 @@ const flowWithRollback = pipe(
   ),
 );
 
+const performAction = async () => {
+  const action = await flowWithRollbackAndCondition(true)();
 
-type Callback<L, R> = (cb: (e: L | null | undefined, r?: R) => void) => void;
+  if (E.isLeft(action)) {
+    const errorsEither = await action.left();
+    const errors = E.isRight(errorsEither) ? errorsEither.right : E.isLeft(errorsEither) ? errorsEither.left : null;
 
-
-
-const getStringCb: Callback<string, Error> = (cb) => cb('hello');
-const task1 = TE.taskify((cb: (d: number) => any) => setTimeout(cb(2), 1000));
-const task2 = TE.taskify(getStringCb);
-const tasks = tuple([task1(), task2()]);
-const results = Ap.sequenceT(T.ApplicativeSeq)(...tasks);
-
-const options = [O.of(123), O.of('asdf')];
-const t = Ap.sequenceT(O.Apply)(options[0], options[1]);
+  }
+};

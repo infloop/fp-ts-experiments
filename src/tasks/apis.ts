@@ -6,6 +6,8 @@ import { doSomeAsyncWork } from './common';
 // API 1
 
 export class ApiOneError extends Error {
+  public apiOneArg: string;
+
   public constructor(...args: any) {
     super(...args);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -38,6 +40,8 @@ export const apiOne: ApiOne = {
 // API 2
 
 export class ApiTwoError extends Error {
+  public apiTwoArg: number;
+
   public constructor(...args: any) {
     super(...args);
     Object.setPrototypeOf(this, new.target.prototype);
@@ -85,7 +89,7 @@ export interface Entity {
 }
 
 export interface Database {
-  persist(userId: number, profileId: string): TaskEither<DatabaseError, Entity>;
+  persist(userId: number, profileId: string | void): TaskEither<DatabaseError, Entity>;
 }
 
 export const database: Database = {

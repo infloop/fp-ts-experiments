@@ -5,7 +5,9 @@
   "author": "infloop",
   "private": true,
   "license": "MIT",
-  "scripts": {},
+  "scripts": {
+    "build": "tsc"
+  },
   "dependencies": {
     "fp-ts": "^2.11.5",
     "io-ts": "^2.2.16",

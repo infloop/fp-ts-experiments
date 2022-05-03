@@ -1,1 +1,3 @@
-export const tuple = <T, U extends [T, ...T[]]>(tuple: U): U => tuple;
+export * from './tuple';
+export * from './wrapped-errors';
+export * from './rollback';
