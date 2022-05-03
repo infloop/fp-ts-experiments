@@ -8,8 +8,6 @@ import { flow, pipe } from 'fp-ts/function';
 import { makeRollback, wrapError } from '../common';
 import { apiOne, apiTwo, database } from './apis';
 
-const TEwrapLeft = <L, R>(a: TE.TaskEither<L, R>) => pipe(a, TE.mapLeft((e: L) => { e }));
-
 // TE.TaskEither<WrappedError, Entity>
 const simpleFlowWithOnlyLastError = pipe(
   pipe(apiOne.createUser('email@test.com'), TE.mapLeft(wrapError)),
@@ -56,13 +54,13 @@ const flowWithRollbackAndCondition = (doCreateProfile: boolean) => pipe(
   )),
   TE.bindW('profile', (res) => pipe(
     doCreateProfile ? apiTwo.createProfile('John', 'Brown', res.user.userId) : TE.of(null),
-    TE.mapLeft(err => makeRollback(err,[
+    TE.mapLeft(err => makeRollback(err, [
       pipe(apiOne.removeUser(res.user.userId), TE.mapLeft(wrapError)),
     ])),
   )),
   TE.bindW('db', (res) => pipe(
-    database.persist(res.user.userId, res.profile ? res.profile?.profileId :  null),
-    TE.mapLeft(err => makeRollback(err,[
+    database.persist(res.user.userId, res.profile ? res.profile?.profileId : null),
+    TE.mapLeft(err => makeRollback(err, [
       pipe(apiOne.removeUser(res.user.userId), TE.mapLeft(wrapError)),
       pipe(res.profile ? apiTwo.removeProfile(res.profile.profileId) : TE.of(null), TE.mapLeft(wrapError)),
     ])),
