@@ -15,6 +15,20 @@ const simpleFlowWithOnlyLastError = pipe(
   TE.chain((res) => pipe(database.persist(res.userId, res.profileId), TE.mapLeft(wrapError))),
 );
 
+const simpleFlowWithOnlyLastError2 = pipe(
+  TE.Do,
+  TE.chainW(() => apiOne.createUser('email@test.com')),
+  TE.chainW((res) => apiTwo.createProfile('John', 'Brown', res.userId)),
+  TE.chainW((res) => database.persist(res.userId, res.profileId)),
+);
+
+const simpleFlowWithAllErrorsAndNoChaining = pipe(
+  TE.Do,
+  TE.apSW('0',apiOne.createUser('email@test.com')),
+  TE.apSW('1',apiTwo.createProfile('John', 'Brown', 1)),
+  TE.apSW('2',database.persist(1, '2')),
+);
+
 //  TE.TaskEither<ApiOneError | ApiTwoError | DatabaseError,
 //    {
 //      readonly 0: User;
@@ -43,6 +57,9 @@ const simpleFlowWithKeysAndAllErrors = pipe(
   TE.chain((results) => TE.right(results)),
 );
 
+const wrapErrors = flow(
+  A.map(wrapError)
+)
 
 const flowWithRollbackAndCondition = (doCreateProfile: boolean) => pipe(
   TE.Do,
@@ -53,7 +70,7 @@ const flowWithRollbackAndCondition = (doCreateProfile: boolean) => pipe(
     ])),
   )),
   TE.bindW('profile', (res) => pipe(
-    doCreateProfile ? apiTwo.createProfile('John', 'Brown', res.user.userId) : TE.of(null),
+    doCreateProfile ? apiTwo.createProfile('John', 'Brown', res.user.userId) : TE.of<never, null>(null),
     TE.mapLeft(err => makeRollback(err, [
       pipe(apiOne.removeUser(res.user.userId), TE.mapLeft(wrapError)),
     ])),
@@ -62,7 +79,7 @@ const flowWithRollbackAndCondition = (doCreateProfile: boolean) => pipe(
     database.persist(res.user.userId, res.profile ? res.profile?.profileId : null),
     TE.mapLeft(err => makeRollback(err, [
       pipe(apiOne.removeUser(res.user.userId), TE.mapLeft(wrapError)),
-      pipe(res.profile ? apiTwo.removeProfile(res.profile.profileId) : TE.of(null), TE.mapLeft(wrapError)),
+      pipe(res.profile ? apiTwo.removeProfile(res.profile.profileId) : TE.of<never, null>(null), TE.mapLeft(wrapError)),
     ])),
   )),
   TE.mapLeft(
